@@ -1,189 +1,523 @@
 ---
-title: "GAPMINDER | LIFE EXPECTANCIES 2007"  
-format: dashboard   
+title: "Global Health Spending and Maternal Mortality Dashboard" 
+author: "VIOLET ESSIEN"
+format: 
+  dashboard:
+    scrolling: true
 ---
-
 ```{python}
+#| include: false
 import pandas as pd
+import numpy as np
 import plotly.express as px
-import itables
-
-# Load the data
-gap = px.data.gapminder()
-
-# Filter for year 2007
-gap_07 = gap.query("year == 2007")
-
-# Compute highest life expectancy
-highest_row = gap_07.sort_values("lifeExp", ascending=False).head(1).squeeze()
-highest_life_exp_country = highest_row["country"]
-highest_life_exp_value = round(highest_row["lifeExp"], 1)
-
-# Compute lowest life expectancy
-lowest_row = gap_07.sort_values("lifeExp", ascending=True).head(1).squeeze()
-lowest_life_exp_country = lowest_row["country"]
-lowest_life_exp_value = round(lowest_row["lifeExp"], 1)
-
-# Compute average (population-weighted) life expectancy
-weighted_mean = (gap_07["lifeExp"] * gap_07["pop"]).sum() / gap_07["pop"].sum()
-average_life_exp_value = round(weighted_mean, 1)
-
-# Create the map using plotly express with a blue color scale
-map_fig = px.choropleth(
-    gap_07,
-    locations="iso_alpha",
-    color="lifeExp",
-    hover_name="country",
-    title="Map of Countries by Life Expectancy",
-    color_continuous_scale="Blues",
-).update_layout(coloraxis_showscale=False)
-
-# Largest 20 countries by Life Expectancy (bar chart) with a blue color scale
-top_20 = gap_07.nlargest(20, "pop").sort_values("lifeExp", ascending=True)
-bar_fig = px.bar(
-    top_20,
-    x="lifeExp",
-    y="country",
-    title="Life Expectancy in 20 Largest Countries",
-    color="lifeExp",
-    color_continuous_scale="Blues",
-).update_layout(coloraxis_showscale=False)
+from itables import show
+import country_converter as coco
+import plotly.graph_objects as go
 ```
 
+```{python}
+#| include: false
+health_pct = pd.read_csv("government_health_spending_of_total_gov_spending_percent.csv")
+mmr_raw = pd.read_csv("mmr_ihme.csv")
+```
 
 ```{python}
-import plotly.io as pio
+#| include: false
+# --- HEALTH PCT CLEANING ---
+health_pct_clean = health_pct.rename(columns={'name': 'country'})
 
-# Define your custom theme
-pio.templates["health_lavender"] = pio.templates["plotly_white"]  # start from white base
-pio.templates["health_lavender"]["layout"].update(
-    font=dict(family="Arial, sans-serif", color="#333333"),
-    paper_bgcolor="#F5F5F5",
-    plot_bgcolor="#F5F5F5",
-    colorway=["#9370DB", "#87CEFA", "#32CD32", "#FF6F61", "#7B68EE"]
+health_pct_long = health_pct_clean.melt(
+    id_vars=['country', 'geo'],
+    var_name='year',
+    value_name='spending'
 )
 
-# Set the template as default
-pio.templates.default = "health_lavender"
+health_pct_long['year'] = health_pct_long['year'].astype(int)
+
+# Normalise known aliases before conversion so coco doesn't fail on them
+health_pct_long["country"] = health_pct_long["country"].replace(
+    {"UAE": "United Arab Emirates"}
+)
+
+health_pct_long["country_code"] = coco.convert(health_pct_long["country"], to="ISO3")
+health_pct_long['continent']    = coco.convert(names=health_pct_long['country'], to='continent')
+
+# FIX: drop rows where coco could not resolve the country — these would otherwise
+#      appear as literal "not found" labels inside every chart's legend / axis / tooltip.
+health_pct_long = health_pct_long[
+    (health_pct_long['country_code'] != 'not found') &
+    (health_pct_long['continent']    != 'not found')
+].copy()
+
+health_pct_long_2000_2020 = health_pct_long[
+    (health_pct_long['year'] >= 2000) & (health_pct_long['year'] <= 2020)
+]
+
+health_pct_filtered = health_pct_long_2000_2020[
+    health_pct_long_2000_2020['country'].isin(
+        ['Germany', 'Nigeria', 'Switzerland', 'Kenya', 'India',
+         'United States of America', 'Italy']
+    )
+]
 ```
 
+```{python}
+#| include: false
+# --- VALUE BOX CALCULATIONS ---
+# FIX: query on already-clean frame — no "not found" rows can surface here
+health_pct_long_2018 = health_pct_long.query("year == 2018")
 
+highest_row = health_pct_long_2018.sort_values("spending", ascending=False).head(1).squeeze()
+highest_spending_country = highest_row["country"]
+highest_spending_value   = round(highest_row["spending"], 1)
 
+lowest_row = health_pct_long_2018.sort_values("spending", ascending=True).head(1).squeeze()
+lowest_spending_country = lowest_row["country"]
+lowest_spending_value   = round(lowest_row["spending"], 1)
+
+global_avg_spending = round(health_pct_long['spending'].mean(), 1)
+
+avg_hlthpct = health_pct_long.groupby('continent')['spending'].mean().reset_index()
+avg_hlthpct.columns = ['Continent', 'Avg Spending (%)']
+avg_hlthpct['Avg Spending (%)'] = avg_hlthpct['Avg Spending (%)'].round(2)
+```
+
+```{python}
+#| include: false
+# =============================================================
+# LEGEND HELPER — reused across all figures
+# Horizontal legend pinned just below the plot area.
+# Prevents vertical legends from overflowing fixed-height
+# row containers in the Quarto dashboard.
+# =============================================================
+H_LEGEND = dict(
+    orientation="h",
+    yanchor="top",
+    y=-0.18,        # sits below the x-axis
+    xanchor="center",
+    x=0.5,
+    font=dict(size=11),
+    itemwidth=70,       # FIX: was 40 — too narrow, colour swatch and label overlapped
+    entrywidth=0.25,    # FIX: fraction of plot width per entry; prevents crowding
+    entrywidthmode="fraction"
+)
+
+# Shared bottom margin that accommodates the horizontal legend
+BASE_MARGIN = dict(l=60, r=30, t=45, b=110)
+
+# Slightly larger bottom for animated charts (slider needs room)
+ANIM_MARGIN = dict(l=60, r=30, t=45, b=130)
+```
+
+```{python}
+#| include: false
+# --- PAGE 1 FIGURES ---
+
+# Choropleth map
+fig_map = px.choropleth(
+    health_pct_long_2000_2020,
+    locations="country_code",
+    color="spending",
+    hover_name="country",
+    animation_frame="year",
+    title="Government Health Spending of Total Government Spending (2000-2020)",
+)
+fig_map.update_layout(
+    autosize=True,
+    margin=ANIM_MARGIN,
+    coloraxis_colorbar=dict(len=0.75, thickness=12, title=dict(side="right"))
+)
+
+# Line chart
+fig_chart = px.line(
+    health_pct_filtered,
+    x='year',
+    y='spending',
+    color='country',
+    title='Health Spending Trend (2000-2020): Selected Countries',
+    labels={'country': 'Country', 'spending': 'Health Spending (%)', 'year': 'Year'}
+)
+fig_chart.update_layout(
+    autosize=True,
+    legend=H_LEGEND,
+    margin=BASE_MARGIN
+)
+
+# Top 10 table
+top_10_spending = health_pct_long.query("year == 2019").nlargest(10, 'spending')
+
+fig_table = go.Figure(data=[go.Table(
+    header=dict(
+        values=['<b>Country</b>', '<b>Health Expenditure (%)</b>'],
+        fill_color='#1E90FF',
+        font=dict(color='white', size=12),
+        align='left'
+    ),
+    cells=dict(
+        values=[top_10_spending.country, top_10_spending.spending.round(2)],
+        fill_color='white',
+        align='left'
+    )
+)])
+fig_table.update_layout(
+    autosize=True,
+    margin=dict(l=10, r=10, t=10, b=10)
+)
+```
+
+```{python}
+#| include: false
+# --- MMR CLEANING ---
+mmr_data = mmr_raw.rename(columns={'name': 'country'})
+
+mmr_long = mmr_data.melt(
+    id_vars=['country', 'geo'],
+    var_name='year',
+    value_name='mortality_rate'
+)
+
+# Normalise aliases before conversion
+mmr_long["country"] = mmr_long["country"].replace({"UAE": "United Arab Emirates"})
+
+mmr_long['continent']    = coco.convert(names=mmr_long['country'], to='continent')
+mmr_long["country_code"] = coco.convert(mmr_long["country"], to="ISO3")
+mmr_long['year']         = mmr_long['year'].astype(int)
+
+# FIX: drop unresolved rows — prevents "not found" appearing in bubble maps,
+#      box-plot x-axis categories, line chart legend, and table cells.
+mmr_long = mmr_long[
+    (mmr_long['country_code'] != 'not found') &
+    (mmr_long['continent']    != 'not found')
+].copy()
+```
+
+```{python}
+#| include: false
+# --- PAGE 2 FIGURES ---
+
+mmr_long_country = mmr_long[
+    mmr_long['country'].isin(
+        ['China', 'Nigeria', 'Japan', 'Ghana',
+         'United Kingdom', 'Yemen', 'New Zealand']
+    )
+]
+
+# Line chart
+fig_chart_mmr = px.line(
+    mmr_long_country,
+    x='year',
+    y='mortality_rate',
+    color='country',
+    title='Maternal Mortality Rate by Country Trend',
+    labels={'country': 'Country', 'mortality_rate': 'Maternal Mortality Rate', 'year': 'Year'}
+)
+fig_chart_mmr.update_layout(
+    autosize=True,
+    legend=H_LEGEND,
+    margin=BASE_MARGIN
+)
+
+# Bubble map
+fig_bubble_map = px.scatter_geo(
+    mmr_long,
+    locations="country_code",
+    color="mortality_rate",
+    hover_name="country",
+    size="mortality_rate",
+    animation_frame="year",
+    projection="natural earth",
+    title="Global Maternal Mortality Crisis Trend (Bubble View)",
+    color_continuous_scale=px.colors.sequential.OrRd,
+    size_max=30
+)
+fig_bubble_map.update_geos(showcountries=True, countrycolor="LightGrey")
+fig_bubble_map.update_layout(
+    autosize=True,
+    margin=ANIM_MARGIN,
+    coloraxis_colorbar=dict(len=0.75, thickness=12, title=dict(side="right"))
+)
+
+# Box plot
+fig_box_mmr = px.box(
+    mmr_long.query("year == 2018"),
+    x="continent",
+    y="mortality_rate",
+    color="continent",
+    title="Maternal Mortality Distribution by Continent (2018)",
+    labels={"mortality_rate": "Maternal Mortality Rate", "continent": "Continent"}
+)
+fig_box_mmr.update_layout(
+    autosize=True,
+    showlegend=False,   # x-axis already labels continents; legend is redundant
+    margin=dict(l=60, r=30, t=45, b=80)
+)
+
+# MMR Table
+top_10_mmr = mmr_long.query("year == 2019").nlargest(10, 'mortality_rate')
+
+fig_table_mmr = go.Figure(data=[go.Table(
+    header=dict(
+        values=['<b>Country</b>', '<b>Mortality Rate</b>'],
+        fill_color='indigo',
+        font=dict(color='white', size=12),
+        align='left'
+    ),
+    cells=dict(
+        values=[top_10_mmr.country, top_10_mmr.mortality_rate.round(1)],
+        fill_color='lavenderblush',
+        align='left'
+    )
+)])
+fig_table_mmr.update_layout(
+    autosize=True,
+    margin=dict(l=10, r=10, t=10, b=10)
+)
+```
+
+```{python}
+# | include: false
+# MERGED DATA FOR PAGE 3
+hlthpct_mmr = pd.merge(
+    health_pct_long,
+    mmr_long,
+    on=["continent", "country", "country_code", "year"],
+    how="inner",
+)
+
+hlthpct_mmr["efficiency"] = hlthpct_mmr["spending"] / hlthpct_mmr["mortality_rate"]
+
+region_summary = (
+    hlthpct_mmr.groupby(["continent", "year"])
+    .agg({"spending": "mean", "mortality_rate": "mean"})
+    .reset_index()
+)
+```
+
+```{python}
+#| include: false
+# --- PAGE 3 FIGURES ---
+
+# Bubble scatter
+fig_bubble = px.scatter(
+    hlthpct_mmr.query("year == 2018"),
+    x="spending",
+    y="mortality_rate",
+    size="mortality_rate",
+    color="continent",
+    hover_name="country",
+    title="Health Spending vs Maternal Mortality (2018)",
+    labels={"spending": "Health Spending (%)", "mortality_rate": "Maternal Mortality Ratio"}
+)
+fig_bubble.update_layout(
+    autosize=True,
+    legend=H_LEGEND,
+    margin=BASE_MARGIN
+)
+
+# MMR trend line
+fig_trend = px.line(
+    region_summary,
+    x="year",
+    y="mortality_rate",
+    color="continent",
+    title="MMR Trends by Continent Over Time",
+    labels={'continent': 'Continent', 'mortality_rate': 'Mortality Rate'}
+)
+fig_trend.update_layout(
+    autosize=True,
+    legend=H_LEGEND,
+    margin=BASE_MARGIN
+)
+
+# Spending box
+fig_box_spending = px.box(
+    hlthpct_mmr.query("year == 2018"),
+    x="continent",
+    y="spending",
+    color="continent",
+    title="Health Spending Distribution by Continent (2018)",
+    labels={"spending": "Health Spending (%)", "continent": "Continent"}
+)
+fig_box_spending.update_layout(
+    autosize=True,
+    showlegend=False,   # x-axis already labels continents; legend is redundant
+    margin=dict(l=60, r=30, t=45, b=80)
+)
+
+# Compare bar
+fig_compare = px.bar(
+    region_summary.query("year == 2018"),
+    x="continent",
+    y="spending",
+    color="continent",
+    title="Average Health Spending by Continent (2018)",
+    labels={'continent': 'Continent', 'spending': 'Avg Spending (%)'}
+)
+fig_compare.update_layout(
+    autosize=True,
+    showlegend=False,   # x-axis already labels continents; legend is redundant
+    margin=dict(l=60, r=30, t=45, b=80)
+)
+
+# Top 10 spending + MMR overlay (horizontal bar)
+top_data = hlthpct_mmr.query("year == 2018").nlargest(10, "spending")
+top_hlthmmr = px.bar(
+    top_data,
+    x="spending",
+    y="country",
+    color="mortality_rate",
+    orientation="h",
+    title="Top 10 Spending Countries with MMR Overlay (2018)",
+    labels={'spending': 'Health Spending (%)', 'country': 'Country', 'mortality_rate': 'MMR'}
+)
+top_hlthmmr.update_layout(
+    autosize=True,
+    margin=dict(l=160, r=30, t=45, b=60),  # wide left margin for long country names
+    coloraxis_colorbar=dict(len=0.75, thickness=12, title=dict(side="right"))
+)
+
+# Scatter all years
+fig_cont = px.scatter(
+    hlthpct_mmr,
+    x="spending",
+    y="mortality_rate",
+    color="continent",
+    title="Spending vs Mortality by Continent (All Years)",
+    labels={"spending": "Health Spending (%)", "mortality_rate": "Maternal Mortality Ratio"}
+)
+fig_cont.update_layout(
+    autosize=True,
+    legend=H_LEGEND,
+    margin=BASE_MARGIN
+)
+```
 
 # Government Health Spending Percent of Overall Expenditure
 
-## Row 1 {height=30%}
+## Row {height="15%"}
 
-::: {.valuebox icon="cash-icon" color="#1E90FF" title="Highest Health Spending 2018"}
-
+### Column {width="33%"}
+::: {.valuebox icon="cash-stack" color="#1E90FF" title="Highest Health Spending 2018"}
 `{python} str(highest_spending_value)`
-
 `{python} highest_spending_country`
-
 :::
 
-::: {.valuebox icon="thermometer" color="#87CEFA" title="Lowest Health Spending 2018"} 
-
+### Column {width="33%"}
+::: {.valuebox icon="thermometer" color="#87CEFA" title="Lowest Health Spending 2018"}
 `{python} str(lowest_spending_value)`
-
 `{python} lowest_spending_country`
-
 :::
 
+### Column {width="34%"}
+::: {.valuebox icon="bar-chart-fill" color="#b954cf" title="Global Average Health Expenditure"}
+`{python} str(global_avg_spending)`
+:::
 
-## Row 2 {height=60%}
+## Row {height="50%"}
 
-### {width=70%}
-
+### Column {width="100%"}
 ```{python}
-fig_chart
+fig_map.show()
 ```
 
-### {width=40%}
+## Row {height="35%"}
 
+### Column {width="65%"}
 ```{python}
-bar_fig
+fig_chart.show()
 ```
 
+### Column {width="35%"}
 ```{python}
-fig_map
+fig_table.show()
 ```
 
-# REGIONAL
+# Maternal Mortality Rate
 
-## Row 1 {height=30%}
+## Row {height="50%"}
 
+### Column {width="60%"}
 ```{python}
-plt.show()
+fig_bubble_map.show()
 ```
 
-## Row 2 {height=70%}
-
-
+### Column {width="40%"}
 ```{python}
-# Create regional summary
-reg_sum = (
-    gap_07.groupby("continent")
-    .apply(
-        lambda g: pd.Series(
-            {
-                "Average Life Expectancy": g["lifeExp"].mean(),
-                "Lowest Life Expectancy": g["lifeExp"].min(),
-                "Country with Lowest Life Exp": g.loc[g["lifeExp"].idxmin(), "country"],
-                "Highest Life Expectancy": g["lifeExp"].max(),
-                "Country with Highest Life Exp": g.loc[
-                    g["lifeExp"].idxmax(), "country"
-                ],
-            }
-        )
-    )
-    .round(2)
-)
-
-itables.show(reg_sum)
+fig_chart_mmr.show()
 ```
 
-## Row 2 {height=70%}
+## Row {height="50%"}
 
-### Column {width="80%"}
-
+### Column {width="60%"}
 ```{python}
-continent_fig = px.box(
-    gap_07,
-    x="continent",
-    y="lifeExp",
-    color="continent",
-    title="Distribution of Life Expectancy by Continent",
-    points="all",  # This shows all data points
-    hover_data=["country"],  # This adds country names to hover info
-    color_discrete_sequence=px.colors.sequential.Turbo,  # Built-in Blues palette
-).update_layout(
-    showlegend=False, xaxis_title="Continent", yaxis_title="Life Expectancy (years)"
-)
-
-continent_fig
+fig_box_mmr.show()
 ```
 
-### Column {width="20%"}
-
-Africa shows markedly lower life expectancy figures compared to other continents, reflecting significant developmental challenges.
-
-Europe and Oceania demonstrate the most consistently high life expectancies, while Asia and the Americas show greater variability, indicating diverse development stages within these regions.
-
-# DATA DOWNLOAD
-
+### Column {width="40%"}
 ```{python}
-# Display full dataset with itables
-itables.show(gap_07, caption="Gapminder Dataset (2007)", buttons=["csvHtml5"])
+fig_table_mmr.show()
 ```
 
+# Relationship: Health Spending vs Maternal Mortality
 
-# ABOUT
+## Row {height="40%"}
 
-This data comes from the python `plotly.express` library’s `gapminder` dataset, which is originally sourced from the Gapminder Foundation.
+### Column {width="60%"}
+```{python}
+fig_bubble.show()
+```
 
-The Gapminder Foundation is a non-profit venture that promotes sustainable global development and achievement of the United Nations Millennium Development Goals by increasing use and understanding of statistics and other information about social, economic, and environmental development.
+### Column {width="40%"}
+```{python}
+fig_trend.show()
+```
 
-**Watch Hans Rosling’s TED Talk:**
+## Row {height="30%"}
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/hVimVzgtD6w?si=dKHepC5EXhjaXOe2" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+### Column {width="60%"}
+```{python}
+fig_box_spending.show()
+```
+
+### Column {width="40%"}
+```{python}
+fig_compare.show()
+```
+
+## Row {height="30%"}
+
+### Column {width="60%"}
+```{python}
+top_hlthmmr.show()
+```
+
+### Column {width="40%"}
+```{python}
+fig_cont.show()
+```
+
+# About Data
+
+## Row {height="100%"}
+
+### Column {width="100%"}
+
+## Row
+
+::: {.column width="100%"}
+
+### Introduction
+
+The aim of choosing these indicators is evaluating the **Impact of Government Health Expenditure on Global Maternal Mortality**. This project serves as the capstone for the GRAPH Course, demonstrating a comprehensive end-to-end data science workflow — from environment setup and raw data ingestion to graphics and GitHub deployment.
+
+**SDG Target 3.1** aims to reduce the global maternal mortality ratio to less than 70 per 100,000 live births by 2030. This dashboard explores: *How efficiently do different nations convert public health spending into the preservation of maternal lives?*
+
+### Key Observations
+
+- Health spending increases across most countries over time, especially after 2010
+- **USA** is the highest spender with rapid growth post-2012
+- **Nigeria** shows the most volatility — a sharp rise around 2004–2006, drop, then modest recovery by 2015
+- A clear gap exists between developed (USA, Germany) and developing countries (Kenya, Nigeria)
+- Lower government health spending is associated with higher maternal mortality ratios in many African countries
+
+:::
