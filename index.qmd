@@ -1,0 +1,746 @@
+---
+title: "Global Health Spending and Maternal Mortality Dashboard" 
+author: "VIOLET ESSIEN"
+format: dashboard
+---
+
+# Introduction
+
+The aim of choosing these indicators is evaluating the Impact of Government Health Expenditure on Global Maternal Mortality
+This project serves as the capstone for the GRAPH Course, demonstrating a comprehensive end-to-end data science workflow—from environment setup and raw data ingestion to graphics and Github deployment. This analysis investigates a critical pillar of global development: the relationship  Government Health Expenditure per capita and the Maternal Mortality Ratio (MMR).
+
+Justification of Indicator choice
+The United Nations Sustainable Development Goal (SDG) Target 3.1 aims to reduce the global maternal mortality ratio to less than 70 per 100,000 live births by 2030. While clinical interventions are well-documented, the macroeconomic drivers—specifically how public sector investment translates into survival outcomes—remain a complex landscape of "value-for-money."
+
+This dashboard explores a central question: How efficiently do different nations convert public health spending into the preservation of maternal lives?
+
+
+```{python}
+import pandas as pd
+import numpy as np
+import plotly.express as px
+from itables import show
+import country_converter as coco
+import plotly.graph_objects as go
+```
+
+
+```{python}
+# Load the indicators
+health_pct = pd.read_csv("government_health_spending_of_total_gov_spending_percent.csv")
+show(health_pct)
+```
+
+```{python}
+mmr = pd.read_csv("mmr_ihme.csv")
+show(mmr)
+```
+
+First Indicator Analysis: Government Health Spending
+
+Data Cleaning and Preparation
+
+```{python}
+# Noticed the country column is titled: 'name', Let's change this column name to 'country' using the .rename dictionary. 
+
+health_pct_clean = health_pct.rename(columns={'name': 'country'})
+
+health_pct_clean
+```
+
+
+```{python}
+# converting to long format for analysis
+health_pct_long = health_pct_clean.melt(
+    id_vars=['country', 'geo'],   
+    var_name='year',        
+    value_name='spending' 
+)
+health_pct_long
+```
+
+
+```{python}
+# To ensure year column is numeric
+health_pct_long['year'] = health_pct_long['year'].astype(int)
+health_pct
+```
+
+```{python}
+health_pct_long["country"] = health_pct_long["country"].replace(
+    {"UAE": "United Arab Emirates"}
+)
+health_pct_long["country_code"] = coco.convert(
+    health_pct_long["country"], to="ISO3")
+health_pct_long
+```
+
+```{python}
+# Query for years between 2000 and 2022 
+health_pct_long_2000_2020 = health_pct_long[
+    (health_pct_long['year'] >= 2000) & (health_pct_long['year'] <= 2020)
+]
+```
+
+```{python}
+# Filter out some countries for charts
+health_pct_filtered = health_pct_long_2000_2020[
+    health_pct_long_2000_2020['country'].isin(
+        ['Germany', 'Nigeria', 'Switzerland', 'Kenya', 'india', 'United States of America', 'Italy']
+    )
+]
+health_pct_filtered
+```
+
+```{python}
+
+# Filter for year 2018
+health_pct_long_2018= health_pct_long.query("year == 2018")
+
+# Compute highest health spending percentage
+highest_row = health_pct_long_2018.sort_values("spending", ascending=False).head(1).squeeze()
+highest_spending_country = highest_row["country"]
+highest_spending_value = round(highest_row["spending"], 1)
+highest_row
+
+# Compute lowest life expectancy
+lowest_row = health_pct_long_2018.sort_values("spending", ascending=True).head(1).squeeze()
+lowest_spending_country = lowest_row["country"]
+lowest_spending_value = round(lowest_row["spending"], 1)
+
+```
+
+```{python}
+avg_hlthpct = health_pct_long.groupby('continent')['spending'].mean()
+show(avg_hlthpct)
+```
+
+```{python}
+global_avg_spending = health_pct_long['spending'].mean()
+global_avg_spending
+```
+
+
+
+## Row {height="30%"}
+## Visuals Text Box
+Creating a text box to show the top country Health Spender in the year 2020. 
+
+```{python}
+# Using the query and .nlargest(1) method to get the top country health spender in a text  box
+# 1. Get the row (The "Box")
+top_country_row = (
+    health_pct_long
+    .query("year == 2020")
+    .nlargest(1, 'spending')
+)
+# 2. Extract the specific values (The "Contents")
+# We use .iloc[0] to grab the first (and only) item in that row
+top_country_name = top_country_row['country'].iloc[0]
+top_value = top_country_row['spending'].iloc[0]
+
+# 3. NOW you can print or use them in a Value Box
+print(f"The top country in 2020 was {top_country_name} with {top_value}% of GDP.")
+```
+
+## Row {height="70%"}
+
+
+
+# Page 1
+
+## Row {height="25%"}
+
+### Highest Spender (2020)
+
+```{python}
+#| content: valuebox
+# Extract variables
+top_country_name = health_pct_long.query("year == 2020").nlargest(1, 'spending')['country'].iloc[0]
+top_value = health_pct_long.query("year == 2020").nlargest(1, 'spending')['spending'].iloc[0]
+
+dict(
+  title = f"Top Spender: {top_country_name}",
+  value = f"{top_value}%",
+  color = "primary"
+)
+```
+
+
+## Row {height="30%"}
+
+## A line graph to show health spending trend over time for selected countries
+
+```{python}
+# A line chart  showing the health spending percentage of total government spending (2000-2022) for selected countries. 
+fig_chart = px.line(
+    health_pct_filtered,
+    x='year',
+    y='spending',
+    color='country',
+    title='Health Spending by Country Trend (2000-2022) for Selected Countries',
+    labels={
+        'country': 'Country',
+        'spending': 'Health Spending',
+        'year': 'Year'
+    }
+)
+
+fig_chart.show()
+```
+
+## Row {height="70%"}
+
+### Column {width="20%"}
+### A Choropleth Map to show Health spending per country in 2000 t0 2020
+
+
+```{python}
+# Map showing health spending by countries
+fig_map = px.choropleth(
+    health_pct_long_2000_2020,
+    locations="country_code",
+    color="spending",
+    hover_name="country",
+    animation_frame="year",
+    title="Government Health Spending of Total Government Spending (2000-2020)",
+)
+fig_map.show()
+```
+
+
+
+### Column {width="80%"}
+
+# Insight
+
+Overall Trend
+Health spending increases across most countries over time.
+The rise is gradual but consistent, especially after 2010.
+This suggests growing investment in healthcare globally.
+2. Country-Specific Insights
+USA (light blue)
+Highest spending throughout the period.
+Strong and continuous increase, especially after 2012.
+Indicates a high-cost healthcare system with rapid growth.
+Germany (red)
+Second highest spender.
+Steady upward trend, showing consistent investment.
+Italy (green)
+Moderate spending.
+Slight increase early on, then plateaus and slightly declines after 2010.
+Switzerland (blue)
+Gradual and steady increase.
+Shows stable and sustained growth in health investment.
+Kenya (purple)
+Lower spending compared to developed countries.
+Slow but noticeable growth, especially toward 2018–2020.
+Nigeria (orange)
+Lowest spending overall.
+Highly fluctuating trend:
+Sharp rise around 2004–2006
+Drop afterward
+Modest recovery around 2015
+Indicates instability or inconsistent funding.
+3. Key Comparisons
+There is a clear gap between developed countries (USA, Germany) and developing countries (Kenya, Nigeria).
+While all countries generally increase spending, growth is more stable in high-income countries.
+Nigeria stands out for volatility, unlike the smoother trends seen elsewhere.
+4. Implications
+Rising spending reflects increased healthcare demand, population growth, and possibly disease burden.
+The wide disparity suggests inequity in healthcare financing and access.
+
+# Maternal Mortality Rate
+
+
+## Second  Indicator Analysis
+### Cleaning and preparation
+
+```{python}
+mmr_raw = pd.read_csv("mmr_ihme.csv")
+show(mmr_raw)
+```
+
+```{python}
+# Noticed the country column is titled: 'name', Let's change this column name to 'country' using the .rename dictionary. 
+
+mmr_data = mmr_raw.rename(columns={'name': 'country'})
+
+show(mmr_data)
+```
+
+
+
+```{python}
+# converting to long format for analysis
+mmr_long = mmr_data.melt(
+    id_vars=['country', 'geo'],   
+    var_name='year',        
+    value_name='mortality_rate' 
+)
+mmr_long
+```
+
+```{python}
+# Rename UAE and convert to ISO3
+mmr_long["country"] = mmr_long["country"].replace(
+    {"UAE": "United Arab Emirates"}
+)
+mmr_long["country_code"] = coco.convert(
+    mmr_long["country"], to="ISO3")
+```
+
+
+```{python}
+# To ensure year column is numeric
+mmr_long['year'] = mmr_long['year'].astype(int)
+```
+
+```{python}
+# Filter out some countries for charts
+mmr_long_country = mmr_long[
+    mmr_long['country'].isin(
+        ['China', 'Nigeria', 'Japan', 'Ghana', 'UK', 'Yemen', 'New Zealand']
+    )
+]
+mmr_long_country
+```
+
+```{python}
+# Maternal Mortality Rate by Country Trend
+fig_chart = px.line(
+    mmr_long_country,
+    x='year',
+    y='mortality_rate',
+    color='country',
+    title='Maternal Mortality Rate by Country Trend',
+    labels={
+        'country': 'Country',
+        'mortality_rate': 'Maternal Mortality Rate',
+        'year': 'Year'
+    }
+)
+
+fig_chart.show()
+```
+
+
+
+```{python}
+# Maternal Mortality Rate by Country Trend
+fig_chart = px.bar(
+    mmr_long_country,
+    x='year',
+    y='mortality_rate',
+    color='country',
+    title='Maternal Mortality Rate by Country Trend',
+    labels={
+        'country': 'Country',
+        'mortality_rate': 'Maternal Mortality Rate',
+        'year': 'Year'
+    }
+)
+
+fig_chart.show()
+```
+
+
+
+```{python}
+# Map showing health spending by countries
+fig_map = px.choropleth(
+   mmr_long,
+    locations="country_code",
+    color="mortality_rate",
+    hover_name="country",
+    animation_frame="year",
+    title="Maternal Mortality Rate by Country Trend'",
+)
+fig_map.show()
+```
+
+```{python}
+# Map showing health spending using Bubbles instead of Shading
+fig_bubble_map = px.scatter_geo(
+    mmr_long,
+    locations="country_code",
+    color="mortality_rate", 
+    hover_name="country", 
+    size="mortality_rate", 
+    animation_frame="year",
+    projection="natural earth",
+    title="Global Maternal Mortality Crisis Trend (Bubble View)",
+    color_continuous_scale=px.colors.sequential.OrRd, # Red scale for mortality
+    size_max=30 # Adjusts the maximum bubble size so they don't overlap too much
+)
+fig_bubble_map.update_geos(
+    showcountries=True, 
+    countrycolor="LightGrey"
+)
+
+fig_bubble_map.show()
+```
+
+
+```{python}
+# 1. Maternal Mortality Rate: Top 10 for the most recent year
+latest_year = mmr_long['year'].max()
+top_10_df = mmr_long.query("year == 2019").nlargest(10, 'mortality_rate')
+
+# 2. Create the Interactive Table
+fig_table = go.Figure(data=[go.Table(
+    # Header Styling
+    header=dict(
+        values=['<b>Country</b>', '<b>Mortality Rate</b>'],
+        fill_color='indigo', # Matching our 'crisis' theme for MMR
+        font=dict(color='white', size=12),
+        align='left'
+    ),
+    # Cell Styling
+    cells=dict(
+        values=[top_10_df.country, top_10_df.mortality_rate],
+        fill_color='pink',
+        align='left'
+    )
+)])
+
+# 3. Adjust layout to fit the dashboard
+fig_table.update_layout(
+    margin=dict(l=10, r=10, t=10, b=10),
+    height=400
+)
+
+fig_table.show()
+```
+
+
+
+### seperate codes from figures
+
+
+# Relationship between Health Spending Percent Vs Maternal Mortality Rate
+
+```{python}
+health_pct_long['continent'] = coco.convert(names=health_pct_long['country'], to='continent')
+```
+
+```{python}
+mmr_long['continent'] = coco.convert(names=mmr_long['country'], to='continent')
+
+```
+
+```{python}
+hlthpct_mmr = pd.merge(
+    health_pct_long,
+    mmr_long,
+    on=['country_code', 'year'],
+    how='inner'   # use 'outer' if you want all data
+)
+hlthpct_mmr
+
+```
+
+
+
+```{python}
+hlthpct_mmr[
+    ['country_code', 'year', 'spending', 'mortality_rate']
+].sort_values(by='spending', ascending=False)
+```
+
+```{python}
+
+```
+
+
+
+```{python}
+import plotly.express as px
+
+fig_bubble = px.scatter(
+    hlthpct_mmr.query("year == 2018"),
+    x="spending",
+    y="mortality_rate",
+    size="mortality_rate",
+    color="continent",
+    hover_name="country_code",
+    title="Health Spending vs Maternal Mortality (Bubble View)",
+    labels={
+        "spending": "Health Spending (%)",
+        "mortality_rate": "Maternal Mortality Ratio"
+    }
+)
+
+fig_bubble.show()
+```
+
+
+```{python}
+## Top 10 countries with their Mortality rates
+top_data = hlthpct_mmr.query("year == 2018").nlargest(10, "spending")
+
+px.bar(
+    top_data,
+    x="spending",
+    y="country_code",
+    color="mortality_rate",
+    orientation="h",
+    title="Top Spending Countries with MMR Overlay",
+    labels= {
+        'spending': 'Health Spending (%)',
+        'country_code': 'Country',
+        'mortality_rate': 'Maternal Mortality Ratio'
+    }
+)
+```
+
+```{python}
+px.scatter(
+    hlthpct_mmr,
+    x="spending",
+    y="mortality_rate",
+    color="continent"
+)
+```
+
+
+```{python}
+import plotly.express as px
+
+region_summary = hlthpct_mmr.groupby(['continent', 'year']).agg({
+    'spending': 'mean',
+    'mortality_rate': 'mean'
+}).reset_index()
+
+fig_compare = px.bar(
+    region_summary.query("year == 2018"),
+    x="continent",
+    y="spending",
+    color="continent",
+    title="Average Health Spending: Africa vs Global",
+    barmode="group",
+    labels= {
+        'continent': 'Continent',
+        'spending': 'Spending'}
+)
+
+fig_compare.show()
+```
+
+
+```{python}
+fig_trend = px.line(
+    region_summary,
+    x="year",
+    y="mortality_rate",
+    color="continent",
+    title="MMR Trends: Africa vs Global",
+     labels= {
+        'continent': 'Continent',
+        'mortality_rate': 'Mortality Rate'}
+)
+
+fig_trend.show()
+```
+
+
+```{python}
+hlthpct_mmr['efficiency'] = hlthpct_mmr['spending'] / hlthpct_mmr['mortality_rate']
+```
+
+
+```{python}
+px.bar(
+    hlthpct_mmr.query("year == 2018"),
+    x="continent",
+    y="efficiency",
+    color="continent",
+    title="Health Spending Efficiency: Africa vs Global"
+)
+```
+
+# Government Health Spending Percent of Overall Expenditure
+
+## Row 1 {height=30%}
+
+::: {.valuebox icon="cash-icon" color="#1E90FF" title="Highest Health Spending 2018"}
+
+`{python} str(highest_spending_value)`
+
+`{python} highest_spending_country`
+
+:::
+
+::: {.valuebox icon="thermometer" color="#87CEFA" title="Lowest Health Spending 2018"} 
+
+`{python} str(lowest_spending_value)`
+
+`{python} lowest_spending_country`
+
+:::
+
+::: {.valuebox icon="bar-chart" color="#104160" title="Gobal Average Health Expediture"} 
+
+`{python} str(global_avg_spending)`
+
+:::
+
+## Row 2 {height=60%}
+
+### {width=70%}
+
+```{python}
+map_fig
+```
+
+### {width=40%}
+
+```{python}
+bar_fig
+```
+
+# REGIONAL
+
+## Row 1 {height=30%}
+
+
+The data suggests a pattern where lower government health spending is associated with higher maternal mortality ratios in many African countries, although variations exist across countries and over time.
+
+# Government Health Spending Percent Per GDP
+
+
+
+
+
+
+
+
+
+# Government Health Spending Percent of Overall Expenditure
+
+## Row 1 {height=130}
+
+::: {.column width="25%"}
+
+::: {.valuebox icon="cash-icon" color="#1E90FF" title="Highest Health Spending 2018"}
+
+`{python} str(highest_spending_value)`
+
+`{python} highest_spending_country`
+
+:::
+
+::: {.column width="25%"}
+
+::: {.valuebox icon="thermometer" color="#87CEFA" title="Lowest Health Spending 2018"} 
+
+`{python} str(lowest_spending_value)`
+
+`{python} lowest_spending_country`
+
+:::
+
+::: {.column width="25%"}
+
+::: {.valuebox icon="bar-chart" color="#104160" title="Gobal Average Health Expediture"} 
+
+`{python} str(global_avg_spending)`
+
+:::
+
+
+```{python}
+fig_map.show()
+```
+
+### {width=30%}
+
+## Row 2 {height=30%}
+
+
+### {width=70%}
+```{python}
+fig_table
+```
+
+
+```{python}
+show(avg_hlthpct)
+```
+
+```{python}
+fig_chart
+```
+
+
+### {width=40%}
+
+
+# Maternal Mortality Rate
+
+### {width=70%}
+
+```{python}
+fig_bubble_map.show()
+```
+
+```{python}
+fig_chart_mmr.show()
+```
+
+```{python}
+fig_table_mmr.show()
+```
+
+```{python}
+fig_box.show()
+```
+
+
+### {width=30%}
+
+# Relationship between Health Spending Percent Vs Maternal Mortality Rate
+
+## Row 2 {height=30%}
+
+```{python}
+fig_box
+```
+
+## Row 2 {height=70%}
+
+## Row 2 {height=30%}
+```{python}
+fig_bubble
+```
+
+## Row 2 {height=70%}
+
+## Row 2 {height=30%}
+
+```{python}
+top_hlthmmr
+```
+
+## Row 2 {height=70%}
+
+
+## Row 2 {height=30%}
+```{python}
+fig_cont
+```
+
+## Row 2 {height=70%}
+
+```{python}
+fig_trend
+```
+
+## Row 2 {height=70%}
+
+```{python}
+fig_compare
+```
+
+
+### {width=70%}
