@@ -1,5 +1,5 @@
 ---
-title: "Global Health Spending and Maternal Mortality Dashboard" 
+title: "Global Health Spending & Maternal Mortality" 
 author: "VIOLET ESSIEN"
 format: 
   dashboard:
@@ -34,7 +34,7 @@ health_pct_long = health_pct_clean.melt(
 
 health_pct_long['year'] = health_pct_long['year'].astype(int)
 
-# Normalise known aliases before conversion so coco doesn't fail on them
+# Renaming UAE
 health_pct_long["country"] = health_pct_long["country"].replace(
     {"UAE": "United Arab Emirates"}
 )
@@ -42,8 +42,7 @@ health_pct_long["country"] = health_pct_long["country"].replace(
 health_pct_long["country_code"] = coco.convert(health_pct_long["country"], to="ISO3")
 health_pct_long['continent']    = coco.convert(names=health_pct_long['country'], to='continent')
 
-# FIX: drop rows where coco could not resolve the country — these would otherwise
-#      appear as literal "not found" labels inside every chart's legend / axis / tooltip.
+# drop rows where coco could not resolve the country to avoid showing "not found" labels inside the charts
 health_pct_long = health_pct_long[
     (health_pct_long['country_code'] != 'not found') &
     (health_pct_long['continent']    != 'not found')
@@ -63,8 +62,7 @@ health_pct_filtered = health_pct_long_2000_2020[
 
 ```{python}
 #| include: false
-# --- VALUE BOX CALCULATIONS ---
-# FIX: query on already-clean frame — no "not found" rows can surface here
+# VALUE BOX CALCULATIONS 
 health_pct_long_2018 = health_pct_long.query("year == 2018")
 
 highest_row = health_pct_long_2018.sort_values("spending", ascending=False).head(1).squeeze()
@@ -83,7 +81,7 @@ avg_hlthpct['Avg Spending (%)'] = avg_hlthpct['Avg Spending (%)'].round(2)
 ```
 
 ```{python}
-#| include: false
+# | include: false
 # =============================================================
 # LEGEND HELPER — reused across all figures
 # Horizontal legend pinned just below the plot area.
@@ -93,13 +91,13 @@ avg_hlthpct['Avg Spending (%)'] = avg_hlthpct['Avg Spending (%)'].round(2)
 H_LEGEND = dict(
     orientation="h",
     yanchor="top",
-    y=-0.18,        # sits below the x-axis
+    y=-0.18,  # sits below the x-axis
     xanchor="center",
     x=0.5,
     font=dict(size=11),
-    itemwidth=70,       # FIX: was 40 — too narrow, colour swatch and label overlapped
-    entrywidth=0.25,    # FIX: fraction of plot width per entry; prevents crowding
-    entrywidthmode="fraction"
+    itemwidth=70,  # FIX: was 40 — too narrow, colour swatch and label overlapped
+    entrywidth=0.25,  # FIX: fraction of plot width per entry; prevents crowding
+    entrywidthmode="fraction",
 )
 
 # Shared bottom margin that accommodates the horizontal legend
@@ -121,6 +119,8 @@ fig_map = px.choropleth(
     hover_name="country",
     animation_frame="year",
     title="Government Health Spending of Total Government Spending (2000-2020)",
+    labels={'spending': 'Health Spending '}
+
 )
 fig_map.update_layout(
     autosize=True,
@@ -167,7 +167,7 @@ fig_table.update_layout(
 
 ```{python}
 #| include: false
-# --- MMR CLEANING ---
+# MMR CLEANING 
 mmr_data = mmr_raw.rename(columns={'name': 'country'})
 
 mmr_long = mmr_data.melt(
@@ -193,7 +193,7 @@ mmr_long = mmr_long[
 
 ```{python}
 #| include: false
-# --- PAGE 2 FIGURES ---
+# PAGE 2 CHARTS 
 
 mmr_long_country = mmr_long[
     mmr_long['country'].isin(
@@ -227,6 +227,7 @@ fig_bubble_map = px.scatter_geo(
     animation_frame="year",
     projection="natural earth",
     title="Global Maternal Mortality Crisis Trend (Bubble View)",
+    labels={'mortality_rate':'Mortality'},
     color_continuous_scale=px.colors.sequential.OrRd,
     size_max=30
 )
@@ -295,7 +296,7 @@ region_summary = (
 
 ```{python}
 #| include: false
-# --- PAGE 3 FIGURES ---
+# PAGE 3 FIGURES CHARTS
 
 # Bubble scatter
 fig_bubble = px.scatter(
@@ -392,24 +393,24 @@ fig_cont.update_layout(
 )
 ```
 
-# Government Health Spending Percent of Overall Expenditure
+# Health Spending
 
 ## Row {height="15%"}
 
 ### Column {width="33%"}
-::: {.valuebox icon="cash-stack" color="#1E90FF" title="Highest Health Spending 2018"}
+::: {.valuebox icon="cash-stack" color="#1E90FF" title="Highest Health Spending 2018(%)"}
 `{python} str(highest_spending_value)`
 `{python} highest_spending_country`
 :::
 
 ### Column {width="33%"}
-::: {.valuebox icon="thermometer" color="#87CEFA" title="Lowest Health Spending 2018"}
+::: {.valuebox icon="thermometer" color="#87CEFA" title="Lowest Health Spending 2018(%)"}
 `{python} str(lowest_spending_value)`
 `{python} lowest_spending_country`
 :::
 
 ### Column {width="34%"}
-::: {.valuebox icon="bar-chart-fill" color="#b954cf" title="Global Average Health Expenditure"}
+::: {.valuebox icon="bar-chart-fill" color="#b954cf" title="Global Average Health Expenditure(%)"}
 `{python} str(global_avg_spending)`
 :::
 
@@ -432,7 +433,7 @@ fig_chart.show()
 fig_table.show()
 ```
 
-# Maternal Mortality Rate
+# Maternal Mortality
 
 ## Row {height="50%"}
 
@@ -458,7 +459,7 @@ fig_box_mmr.show()
 fig_table_mmr.show()
 ```
 
-# Relationship: Health Spending vs Maternal Mortality
+# Spending–Mortality Relationship
 
 ## Row {height="40%"}
 
@@ -517,7 +518,15 @@ The aim of choosing these indicators is evaluating the **Impact of Government He
 - Health spending increases across most countries over time, especially after 2010
 - **USA** is the highest spender with rapid growth post-2012
 - **Nigeria** shows the most volatility — a sharp rise around 2004–2006, drop, then modest recovery by 2015
-- A clear gap exists between developed (USA, Germany) and developing countries (Kenya, Nigeria)
+- A clear gap exists between developed countries (USA, Germany) and developing countries (Kenya, Nigeria)
 - Lower government health spending is associated with higher maternal mortality ratios in many African countries
 
+Data Download:
+
+[Gapminder Data: Government Health Spending](https://www.gapminder.org/b049d4c3-57dc-423d-8307-63c3f1b67374)
+
+[Gapminder Data: Maternal Mortality](https://www.gapminder.org/122eda60-af96-4a81-82ba-8bbb0873a501)
+
 :::
+
+
